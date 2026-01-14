@@ -1,5 +1,5 @@
 import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
-import { createWorker } from 'tesseract.js';
+import { createWorker, PSM } from 'tesseract.js';
 
 interface OCRPluginSettings {
 	defaultFolder: string;
@@ -9,6 +9,11 @@ interface OCRPluginSettings {
 	brightness: number;
 	grayscale: boolean;
 	sharpen: boolean;
+	binarize: boolean;
+	binarizeThreshold: number;
+	denoise: boolean;
+	upscale: boolean;
+	upscaleFactor: number;
 	psm: string;
 	oem: string;
 }
@@ -21,6 +26,11 @@ const DEFAULT_SETTINGS: OCRPluginSettings = {
 	brightness: 1.1,
 	grayscale: true,
 	sharpen: true,
+	binarize: true,
+	binarizeThreshold: 128,
+	denoise: true,
+	upscale: true,
+	upscaleFactor: 2,
 	psm: '3',
 	oem: '1'
 }
@@ -101,12 +111,15 @@ export default class OCRPlugin extends Plugin {
 						return;
 					}
 					
-					// Set canvas size to image size
-					canvas.width = img.width;
-					canvas.height = img.height;
+					// Apply upscaling if enabled
+					const scale = this.settings.upscale ? this.settings.upscaleFactor : 1;
+					canvas.width = img.width * scale;
+					canvas.height = img.height * scale;
 					
-					// Draw image
-					ctx.drawImage(img, 0, 0);
+					// Draw image with upscaling
+					ctx.imageSmoothingEnabled = true;
+					ctx.imageSmoothingQuality = 'high';
+					ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 					
 					if (this.settings.preprocessImage) {
 						const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -176,6 +189,47 @@ export default class OCRPlugin extends Plugin {
 							}
 						}
 						
+						// Apply denoising
+						if (this.settings.denoise) {
+							const w = canvas.width;
+							const h = canvas.height;
+							const src = new Uint8ClampedArray(data);
+							
+							// Simple median filter for denoising
+							for (let y = 1; y < h - 1; y++) {
+								for (let x = 1; x < w - 1; x++) {
+									const values: number[] = [];
+									
+									for (let dy = -1; dy <= 1; dy++) {
+										for (let dx = -1; dx <= 1; dx++) {
+											const idx = ((y + dy) * w + (x + dx)) * 4;
+											values.push(src[idx]);
+										}
+									}
+									
+									values.sort((a, b) => a - b);
+									const median = values[4]; // Middle value of 9 pixels
+									
+									const dstOff = (y * w + x) * 4;
+									data[dstOff] = median;
+									data[dstOff + 1] = median;
+									data[dstOff + 2] = median;
+								}
+							}
+						}
+						
+						// Apply binarization (crucial for OCR)
+						if (this.settings.binarize) {
+							const threshold = this.settings.binarizeThreshold;
+							for (let i = 0; i < data.length; i += 4) {
+								const gray = data[i]; // Already grayscale
+								const binary = gray > threshold ? 255 : 0;
+								data[i] = binary;
+								data[i + 1] = binary;
+								data[i + 2] = binary;
+							}
+						}
+						
 						ctx.putImageData(imageData, 0, 0);
 					}
 					
@@ -195,10 +249,12 @@ export default class OCRPlugin extends Plugin {
 		});
 		
 		try {
-			// Configure Tesseract parameters
+			// Configure Tesseract parameters for better accuracy
 			await worker.setParameters({
-				tessedit_pageseg_mode: this.settings.psm as any,
+				tessedit_pageseg_mode: this.settings.psm as PSM,
 				tessedit_ocr_engine_mode: parseInt(this.settings.oem),
+				preserve_interword_spaces: '1',
+				tessedit_char_whitelist: '',  // Add characters here if needed
 			});
 			
 			// Preprocess image if enabled
@@ -552,7 +608,7 @@ class OCRSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
+	new Setting(containerEl)
 			.setName('Apply sharpening')
 			.setDesc('Sharpen the image to enhance edges (helps with blurry images)')
 			.addToggle(toggle => toggle
@@ -563,12 +619,15 @@ class OCRSettingTab extends PluginSettingTab {
 				}));
 
 		// Tips section
-		containerEl.createEl('h3', { text: 'Tips for Better OCR' });
-		const tipsList = containerEl.createEl('ul', { cls: 'ocr-tips' });
-		tipsList.createEl('li', { text: 'Use well-lit, clear images with good contrast' });
-		tipsList.createEl('li', { text: 'For handwritten text, try PSM 6 or 11' });
-		tipsList.createEl('li', { text: 'Increase contrast (1.5-2.0) for faint handwriting' });
-		tipsList.createEl('li', { text: 'Enable sharpening for blurry or low-quality images' });
-		tipsList.createEl('li', { text: 'For mixed languages, you may need to install additional language packs' });
+	containerEl.createEl('h3', { text: 'Tips for Better OCR' });
+	const tipsList = containerEl.createEl('ul', { cls: 'ocr-tips' });
+	tipsList.createEl('li', { text: 'Use well-lit, clear images with good contrast' });
+	tipsList.createEl('li', { text: 'Binarization (B&W) is crucial - keep it enabled for best results' });
+	tipsList.createEl('li', { text: 'For handwritten text, try PSM 6 or 11' });
+	tipsList.createEl('li', { text: 'Increase contrast (1.5-2.0) for faint handwriting' });
+	tipsList.createEl('li', { text: 'Enable upscaling (2x) for small text or low-resolution images' });
+	tipsList.createEl('li', { text: 'Adjust binarization threshold if text is too light (lower) or too dark (higher)' });
+	tipsList.createEl('li', { text: 'Enable denoising for photos taken with a phone camera' });
+	tipsList.createEl('li', { text: 'For mixed languages, you may need to install additional language packs' });
 	}
 }
