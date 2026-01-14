@@ -5,7 +5,15 @@ Convert handwritten text images to Obsidian notes using OCR (Optical Character R
 ## Features
 
 - Upload images containing handwritten or printed text
-- Extract text using Tesseract.js OCR engine
+- Extract text using Tesseract.js OCR engine with configurable settings
+- **Advanced image preprocessing** for improved accuracy:
+  - Grayscale conversion
+  - Adjustable contrast and brightness
+  - Image sharpening for blurry text
+- **Configurable OCR parameters**:
+  - Multiple page segmentation modes (PSM)
+  - OCR engine selection (OEM)
+  - Multi-language support
 - Edit frontmatter metadata (title, date, custom fields) before creating the note
 - Automatically create formatted Obsidian notes with proper frontmatter
 - Configurable default folder for new notes
@@ -58,7 +66,25 @@ npm run dev
 
 ### Settings
 
-- **Default Folder**: Specify a default folder where new notes will be created (leave empty for vault root)
+Access settings via Settings → OCR Image to Note
+
+**General:**
+- **Default Folder**: Specify a default folder where new notes will be created
+
+**OCR Configuration:**
+- **Language**: Set OCR language (eng, spa, fra, deu, chi_sim, etc.)
+- **Page Segmentation Mode (PSM)**: How Tesseract segments the page
+  - PSM 3: Fully automatic (recommended for most cases)
+  - PSM 6: Uniform block of text (good for paragraphs)
+  - PSM 11: Sparse text (good for scattered handwritten notes)
+- **OCR Engine Mode (OEM)**: Choose between Legacy, LSTM, or hybrid engine
+
+**Image Preprocessing:**
+- **Enable Preprocessing**: Toggle image enhancements on/off
+- **Grayscale**: Convert to grayscale for better accuracy
+- **Contrast**: Adjust contrast (1.5 recommended for handwriting)
+- **Brightness**: Adjust brightness (1.1 recommended)
+- **Sharpening**: Enable for blurry or low-quality images
 
 ## Note Format
 
@@ -73,6 +99,10 @@ tags: value
 
 [OCR extracted text content]
 ```
+
+## Troubleshooting
+
+If OCR results are poor or you're getting gibberish text, see the **[TROUBLESHOOTING.md](TROUBLESHOOTING.md)** guide for detailed solutions and recommended settings.
 
 ## Requirements
 

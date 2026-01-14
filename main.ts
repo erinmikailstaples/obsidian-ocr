@@ -3,10 +3,26 @@ import { createWorker } from 'tesseract.js';
 
 interface OCRPluginSettings {
 	defaultFolder: string;
+	language: string;
+	preprocessImage: boolean;
+	contrast: number;
+	brightness: number;
+	grayscale: boolean;
+	sharpen: boolean;
+	psm: string;
+	oem: string;
 }
 
 const DEFAULT_SETTINGS: OCRPluginSettings = {
-	defaultFolder: ''
+	defaultFolder: '',
+	language: 'eng',
+	preprocessImage: true,
+	contrast: 1.5,
+	brightness: 1.1,
+	grayscale: true,
+	sharpen: true,
+	psm: '3',
+	oem: '1'
 }
 
 export default class OCRPlugin extends Plugin {
@@ -71,12 +87,127 @@ export default class OCRPlugin extends Plugin {
 		input.click();
 	}
 
+	async preprocessImage(file: File): Promise<string> {
+		return new Promise((resolve, reject) => {
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				const img = new Image();
+				img.onload = () => {
+					const canvas = document.createElement('canvas');
+					const ctx = canvas.getContext('2d');
+					
+					if (!ctx) {
+						reject(new Error('Failed to get canvas context'));
+						return;
+					}
+					
+					// Set canvas size to image size
+					canvas.width = img.width;
+					canvas.height = img.height;
+					
+					// Draw image
+					ctx.drawImage(img, 0, 0);
+					
+					if (this.settings.preprocessImage) {
+						const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+						const data = imageData.data;
+						
+						// Apply grayscale
+						if (this.settings.grayscale) {
+							for (let i = 0; i < data.length; i += 4) {
+								const avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+								data[i] = avg;
+								data[i + 1] = avg;
+								data[i + 2] = avg;
+							}
+						}
+						
+						// Apply contrast and brightness
+						const contrast = this.settings.contrast;
+						const brightness = this.settings.brightness;
+						const factor = (259 * (contrast * 100 + 255)) / (255 * (259 - contrast * 100));
+						
+						for (let i = 0; i < data.length; i += 4) {
+							data[i] = factor * (data[i] - 128) + 128 + (brightness - 1) * 50;
+							data[i + 1] = factor * (data[i + 1] - 128) + 128 + (brightness - 1) * 50;
+							data[i + 2] = factor * (data[i + 2] - 128) + 128 + (brightness - 1) * 50;
+						}
+						
+						// Apply sharpening
+						if (this.settings.sharpen) {
+							const weights = [
+								0, -1, 0,
+								-1, 5, -1,
+								0, -1, 0
+							];
+							const side = Math.round(Math.sqrt(weights.length));
+							const halfSide = Math.floor(side / 2);
+							
+							const src = new Uint8ClampedArray(data);
+							const w = canvas.width;
+							const h = canvas.height;
+							
+							for (let y = 0; y < h; y++) {
+								for (let x = 0; x < w; x++) {
+									const sy = y;
+									const sx = x;
+									const dstOff = (y * w + x) * 4;
+									let r = 0, g = 0, b = 0;
+									
+									for (let cy = 0; cy < side; cy++) {
+										for (let cx = 0; cx < side; cx++) {
+											const scy = sy + cy - halfSide;
+											const scx = sx + cx - halfSide;
+											
+											if (scy >= 0 && scy < h && scx >= 0 && scx < w) {
+												const srcOff = (scy * w + scx) * 4;
+												const wt = weights[cy * side + cx];
+												r += src[srcOff] * wt;
+												g += src[srcOff + 1] * wt;
+												b += src[srcOff + 2] * wt;
+											}
+										}
+									}
+									
+									data[dstOff] = r;
+									data[dstOff + 1] = g;
+									data[dstOff + 2] = b;
+								}
+							}
+						}
+						
+						ctx.putImageData(imageData, 0, 0);
+					}
+					
+					resolve(canvas.toDataURL());
+				};
+				img.onerror = () => reject(new Error('Failed to load image'));
+				img.src = e.target?.result as string;
+			};
+			reader.onerror = () => reject(new Error('Failed to read file'));
+			reader.readAsDataURL(file);
+		});
+	}
+
 	async performOCR(file: File): Promise<string> {
-		const worker = await createWorker('eng');
+		const worker = await createWorker(this.settings.language, 1, {
+			logger: m => console.log(m)
+		});
 		
 		try {
-			const { data: { text } } = await worker.recognize(file);
-			return text;
+			// Configure Tesseract parameters
+			await worker.setParameters({
+				tessedit_pageseg_mode: parseInt(this.settings.psm),
+				tessedit_ocr_engine_mode: parseInt(this.settings.oem),
+			});
+			
+			// Preprocess image if enabled
+			const imageData = this.settings.preprocessImage 
+				? await this.preprocessImage(file)
+				: file;
+			
+			const { data: { text } } = await worker.recognize(imageData);
+			return text.trim();
 		} finally {
 			await worker.terminate();
 		}
@@ -309,6 +440,9 @@ class OCRSettingTab extends PluginSettingTab {
 
 		containerEl.createEl('h2', { text: 'OCR Plugin Settings' });
 
+		// General Settings
+		containerEl.createEl('h3', { text: 'General' });
+
 		new Setting(containerEl)
 			.setName('Default folder')
 			.setDesc('Default folder for new notes (leave empty for vault root)')
@@ -319,5 +453,122 @@ class OCRSettingTab extends PluginSettingTab {
 					this.plugin.settings.defaultFolder = value;
 					await this.plugin.saveSettings();
 				}));
+
+		// OCR Settings
+		containerEl.createEl('h3', { text: 'OCR Configuration' });
+
+		new Setting(containerEl)
+			.setName('Language')
+			.setDesc('Tesseract language code (e.g., eng, spa, fra, deu, chi_sim)')
+			.addText(text => text
+				.setPlaceholder('eng')
+				.setValue(this.plugin.settings.language)
+				.onChange(async (value) => {
+					this.plugin.settings.language = value || 'eng';
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Page Segmentation Mode (PSM)')
+			.setDesc('How Tesseract segments the page. 3=Fully automatic (default), 6=Assume uniform block of text, 11=Sparse text')
+			.addDropdown(dropdown => dropdown
+				.addOption('0', '0 - Orientation and script detection only')
+				.addOption('1', '1 - Automatic with OSD')
+				.addOption('3', '3 - Fully automatic (recommended)')
+				.addOption('4', '4 - Single column of text')
+				.addOption('6', '6 - Uniform block of text')
+				.addOption('7', '7 - Single text line')
+				.addOption('8', '8 - Single word')
+				.addOption('11', '11 - Sparse text')
+				.addOption('13', '13 - Raw line (no segmentation)')
+				.setValue(this.plugin.settings.psm)
+				.onChange(async (value) => {
+					this.plugin.settings.psm = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('OCR Engine Mode (OEM)')
+			.setDesc('OCR engine to use. 1=LSTM only (recommended), 0=Legacy, 2=Legacy+LSTM')
+			.addDropdown(dropdown => dropdown
+				.addOption('0', '0 - Legacy engine only')
+				.addOption('1', '1 - LSTM engine (recommended)')
+				.addOption('2', '2 - Legacy + LSTM')
+				.addOption('3', '3 - Default (based on what is available)')
+				.setValue(this.plugin.settings.oem)
+				.onChange(async (value) => {
+					this.plugin.settings.oem = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Image Preprocessing
+		containerEl.createEl('h3', { text: 'Image Preprocessing' });
+		containerEl.createEl('p', { 
+			text: 'Preprocessing can significantly improve OCR accuracy. Adjust these settings if results are poor.',
+			cls: 'setting-item-description'
+		});
+
+		new Setting(containerEl)
+			.setName('Enable preprocessing')
+			.setDesc('Apply image enhancements before OCR (recommended for handwritten text)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.preprocessImage)
+				.onChange(async (value) => {
+					this.plugin.settings.preprocessImage = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Convert to grayscale')
+			.setDesc('Convert image to grayscale (improves accuracy for most cases)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.grayscale)
+				.onChange(async (value) => {
+					this.plugin.settings.grayscale = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Contrast')
+			.setDesc('Increase contrast to make text stand out (1.0 = no change, 1.5 = recommended)')
+			.addSlider(slider => slider
+				.setLimits(0.5, 3.0, 0.1)
+				.setValue(this.plugin.settings.contrast)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.contrast = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Brightness')
+			.setDesc('Adjust brightness (1.0 = no change, 1.1 = recommended)')
+			.addSlider(slider => slider
+				.setLimits(0.5, 2.0, 0.1)
+				.setValue(this.plugin.settings.brightness)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.brightness = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Apply sharpening')
+			.setDesc('Sharpen the image to enhance edges (helps with blurry images)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.sharpen)
+				.onChange(async (value) => {
+					this.plugin.settings.sharpen = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Tips section
+		containerEl.createEl('h3', { text: 'Tips for Better OCR' });
+		const tipsList = containerEl.createEl('ul', { cls: 'ocr-tips' });
+		tipsList.createEl('li', { text: 'Use well-lit, clear images with good contrast' });
+		tipsList.createEl('li', { text: 'For handwritten text, try PSM 6 or 11' });
+		tipsList.createEl('li', { text: 'Increase contrast (1.5-2.0) for faint handwriting' });
+		tipsList.createEl('li', { text: 'Enable sharpening for blurry or low-quality images' });
+		tipsList.createEl('li', { text: 'For mixed languages, you may need to install additional language packs' });
 	}
 }

@@ -23,3 +23,20 @@
     flex: 1;
     min-width: 120px;
 }
+
+/* Settings styles */
+.ocr-tips {
+    padding-left: 1.5rem;
+    margin-top: 0.5rem;
+}
+
+.ocr-tips li {
+    margin-bottom: 0.5rem;
+    color: var(--text-muted);
+}
+
+.setting-item-description {
+    padding-bottom: 1rem;
+    color: var(--text-muted);
+    font-style: italic;
+}
