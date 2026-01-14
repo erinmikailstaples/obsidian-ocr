@@ -1,0 +1,25 @@
+.metadata-container {
+    margin-bottom: 1rem;
+}
+
+.metadata-field {
+    margin-bottom: 0.5rem;
+}
+
+.metadata-field .setting-item {
+    border: none;
+    padding: 0.5rem;
+    background-color: var(--background-secondary);
+    border-radius: 4px;
+}
+
+.metadata-field .setting-item-control {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.metadata-field input[type="text"] {
+    flex: 1;
+    min-width: 120px;
+}

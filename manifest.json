@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-ocr",
+  "name": "OCR Image to Note",
+  "version": "1.0.0",
+  "minAppVersion": "0.15.0",
+  "description": "Convert handwritten text images to Obsidian notes with OCR",
+  "author": "Erin Mikail Staples",
+  "authorUrl": "https://github.com/erinmikailstaples/obsidian-ocr",
+  "isDesktopOnly": false
+}
