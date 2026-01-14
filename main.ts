@@ -197,7 +197,7 @@ export default class OCRPlugin extends Plugin {
 		try {
 			// Configure Tesseract parameters
 			await worker.setParameters({
-				tessedit_pageseg_mode: parseInt(this.settings.psm),
+				tessedit_pageseg_mode: this.settings.psm as any,
 				tessedit_ocr_engine_mode: parseInt(this.settings.oem),
 			});
 			
