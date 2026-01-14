@@ -22,17 +22,17 @@ const DEFAULT_SETTINGS: OCRPluginSettings = {
 	defaultFolder: '',
 	language: 'eng',
 	preprocessImage: true,
-	contrast: 1.5,
-	brightness: 1.1,
+	contrast: 2.0,  // Higher contrast for handwriting
+	brightness: 1.2,  // Slightly brighter for handwriting
 	grayscale: true,
-	sharpen: true,
+	sharpen: false,  // Sharpening can hurt handwriting recognition
 	binarize: true,
-	binarizeThreshold: 128,
+	binarizeThreshold: 140,  // Higher threshold for handwriting (less aggressive)
 	denoise: true,
 	upscale: true,
-	upscaleFactor: 2,
-	psm: '3',
-	oem: '1'
+	upscaleFactor: 3,  // Higher upscaling for handwriting
+	psm: '6',  // Single uniform block - better for handwriting
+	oem: '1'  // LSTM engine is better for handwriting
 }
 
 export default class OCRPlugin extends Plugin {
@@ -557,16 +557,16 @@ class OCRSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		// Image Preprocessing
-		containerEl.createEl('h3', { text: 'Image Preprocessing' });
-		containerEl.createEl('p', { 
-			text: 'Preprocessing can significantly improve OCR accuracy. Adjust these settings if results are poor.',
-			cls: 'setting-item-description'
-		});
+	// Image Preprocessing
+	containerEl.createEl('h3', { text: 'Image Preprocessing' });
+	containerEl.createEl('p', { 
+		text: 'These settings are optimized for handwriting. Adjust contrast (2.0+) and binarization threshold (130-150) for best results with your handwriting style.',
+		cls: 'setting-item-description'
+	});
 
-		new Setting(containerEl)
+	new Setting(containerEl)
 			.setName('Enable preprocessing')
-			.setDesc('Apply image enhancements before OCR (recommended for handwritten text)')
+			.setDesc('Apply image enhancements before OCR (essential for handwriting)')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.preprocessImage)
 				.onChange(async (value) => {
@@ -584,9 +584,9 @@ class OCRSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
+	new Setting(containerEl)
 			.setName('Contrast')
-			.setDesc('Increase contrast to make text stand out (1.0 = no change, 1.5 = recommended)')
+			.setDesc('Higher contrast crucial for handwriting (2.0-2.5 recommended for handwriting)')
 			.addSlider(slider => slider
 				.setLimits(0.5, 3.0, 0.1)
 				.setValue(this.plugin.settings.contrast)
@@ -596,9 +596,9 @@ class OCRSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
+	new Setting(containerEl)
 			.setName('Brightness')
-			.setDesc('Adjust brightness (1.0 = no change, 1.1 = recommended)')
+			.setDesc('Adjust brightness (1.2 recommended for handwriting)')
 			.addSlider(slider => slider
 				.setLimits(0.5, 2.0, 0.1)
 				.setValue(this.plugin.settings.brightness)
@@ -610,7 +610,7 @@ class OCRSettingTab extends PluginSettingTab {
 
 	new Setting(containerEl)
 			.setName('Apply sharpening')
-			.setDesc('Sharpen the image to enhance edges (helps with blurry images)')
+			.setDesc('Usually OFF for handwriting (can create artifacts). Enable only for very blurry text')
 			.addToggle(toggle => toggle
 				.setValue(this.plugin.settings.sharpen)
 				.onChange(async (value) => {
@@ -618,16 +618,74 @@ class OCRSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		// Tips section
-	containerEl.createEl('h3', { text: 'Tips for Better OCR' });
+		new Setting(containerEl)
+			.setName('Apply denoising')
+			.setDesc('Remove noise from the image (recommended for photos of documents)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.denoise)
+				.onChange(async (value) => {
+					this.plugin.settings.denoise = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Upscale image')
+			.setDesc('Increase image resolution before OCR (helps with small text)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.upscale)
+				.onChange(async (value) => {
+					this.plugin.settings.upscale = value;
+					await this.plugin.saveSettings();
+				}));
+
+	new Setting(containerEl)
+			.setName('Upscale factor')
+			.setDesc('3x recommended for handwriting (higher resolution = better accuracy)')
+			.addSlider(slider => slider
+				.setLimits(1, 4, 0.5)
+				.setValue(this.plugin.settings.upscaleFactor)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.upscaleFactor = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Binarize (Black & White)')
+			.setDesc('Convert to pure black & white - crucial for OCR accuracy (recommended)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.binarize)
+				.onChange(async (value) => {
+					this.plugin.settings.binarize = value;
+					await this.plugin.saveSettings();
+				}));
+
+	new Setting(containerEl)
+			.setName('Binarization threshold')
+			.setDesc('For handwriting: 130-150 (higher = less aggressive). Lower if text disappears, higher if too noisy')
+			.addSlider(slider => slider
+				.setLimits(50, 200, 5)
+				.setValue(this.plugin.settings.binarizeThreshold)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.binarizeThreshold = value;
+					await this.plugin.saveSettings();
+				}));
+
+	// Tips section
+	containerEl.createEl('h3', { text: 'Tips for Better Handwriting OCR' });
+	containerEl.createEl('p', { 
+		text: '⚠️ Note: Tesseract is trained primarily for printed text. Handwriting recognition accuracy varies greatly depending on writing style and legibility.',
+		cls: 'setting-item-description'
+	});
 	const tipsList = containerEl.createEl('ul', { cls: 'ocr-tips' });
-	tipsList.createEl('li', { text: 'Use well-lit, clear images with good contrast' });
-	tipsList.createEl('li', { text: 'Binarization (B&W) is crucial - keep it enabled for best results' });
-	tipsList.createEl('li', { text: 'For handwritten text, try PSM 6 or 11' });
-	tipsList.createEl('li', { text: 'Increase contrast (1.5-2.0) for faint handwriting' });
-	tipsList.createEl('li', { text: 'Enable upscaling (2x) for small text or low-resolution images' });
-	tipsList.createEl('li', { text: 'Adjust binarization threshold if text is too light (lower) or too dark (higher)' });
-	tipsList.createEl('li', { text: 'Enable denoising for photos taken with a phone camera' });
-	tipsList.createEl('li', { text: 'For mixed languages, you may need to install additional language packs' });
+	tipsList.createEl('li', { text: 'Take photos in bright, even lighting with the text perpendicular to camera' });
+	tipsList.createEl('li', { text: 'Use 3x upscaling for small or tightly-spaced handwriting' });
+	tipsList.createEl('li', { text: 'Set contrast to 2.0-2.5 for faint pen/pencil' });
+	tipsList.createEl('li', { text: 'Binarization threshold 130-150 works best for most handwriting' });
+	tipsList.createEl('li', { text: 'Keep sharpening OFF - it creates artifacts with handwriting' });
+	tipsList.createEl('li', { text: 'PSM 6 (default) works for paragraphs, try PSM 11 for sparse notes' });
+	tipsList.createEl('li', { text: 'Cursive and highly stylized handwriting will have poor results' });
+	tipsList.createEl('li', { text: 'Print-style handwriting with clear separation between letters works best' });
 	}
 }
