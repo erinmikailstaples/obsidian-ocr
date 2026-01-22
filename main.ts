@@ -1,6 +1,223 @@
 import { App, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile } from 'obsidian';
 import { createWorker, PSM } from 'tesseract.js';
 
+// Preprocessing utility functions
+class ImagePreprocessor {
+	// Otsu's method for automatic threshold calculation
+	static calculateOtsuThreshold(data: Uint8ClampedArray): number {
+		const histogram = new Array(256).fill(0);
+		const total = data.length / 4;
+		
+		for (let i = 0; i < data.length; i += 4) {
+			histogram[data[i]]++;
+		}
+		
+		let sum = 0;
+		for (let i = 0; i < 256; i++) {
+			sum += i * histogram[i];
+		}
+		
+		let sumB = 0, wB = 0, wF = 0;
+		let maxVariance = 0, threshold = 0;
+		
+		for (let t = 0; t < 256; t++) {
+			wB += histogram[t];
+			if (wB === 0) continue;
+			
+			wF = total - wB;
+			if (wF === 0) break;
+			
+			sumB += t * histogram[t];
+			const mB = sumB / wB;
+			const mF = (sum - sumB) / wF;
+			
+			const variance = wB * wF * (mB - mF) ** 2;
+			if (variance > maxVariance) {
+				maxVariance = variance;
+				threshold = t;
+			}
+		}
+		return threshold;
+	}
+	
+	// Bradley adaptive binarization
+	static adaptiveBinarize(imageData: ImageData, windowSize: number): void {
+		const data = imageData.data;
+		const width = imageData.width;
+		const height = imageData.height;
+		const halfWindow = Math.floor(windowSize / 2);
+		
+		// Create integral image
+		const integral = new Array(width * height).fill(0);
+		for (let y = 0; y < height; y++) {
+			let rowSum = 0;
+			for (let x = 0; x < width; x++) {
+				const idx = (y * width + x) * 4;
+				rowSum += data[idx]; // grayscale value
+				const above = y > 0 ? integral[(y - 1) * width + x] : 0;
+				integral[y * width + x] = rowSum + above;
+			}
+		}
+		
+		// Apply adaptive threshold
+		for (let y = 0; y < height; y++) {
+			for (let x = 0; x < width; x++) {
+				const x1 = Math.max(0, x - halfWindow);
+				const x2 = Math.min(width - 1, x + halfWindow);
+				const y1 = Math.max(0, y - halfWindow);
+				const y2 = Math.min(height - 1, y + halfWindow);
+				
+				const count = (x2 - x1) * (y2 - y1);
+				const sum = integral[y2 * width + x2]
+					- (x1 > 0 ? integral[y2 * width + (x1 - 1)] : 0)
+					- (y1 > 0 ? integral[(y1 - 1) * width + x2] : 0)
+					+ (x1 > 0 && y1 > 0 ? integral[(y1 - 1) * width + (x1 - 1)] : 0);
+				
+				const idx = (y * width + x) * 4;
+				const threshold = (sum / count) * 0.85; // 15% below local mean
+				const binary = data[idx] > threshold ? 255 : 0;
+				
+				data[idx] = binary;
+				data[idx + 1] = binary;
+				data[idx + 2] = binary;
+			}
+		}
+	}
+	
+	// Morphological closing: dilation followed by erosion
+	static morphologicalClosing(imageData: ImageData, kernelSize: number): void {
+		this.dilate(imageData, kernelSize);
+		this.erode(imageData, kernelSize);
+	}
+	
+	// Morphological opening: erosion followed by dilation
+	static morphologicalOpening(imageData: ImageData, kernelSize: number): void {
+		this.erode(imageData, kernelSize);
+		this.dilate(imageData, kernelSize);
+	}
+	
+	static dilate(imageData: ImageData, kernelSize: number): void {
+		const data = imageData.data;
+		const width = imageData.width;
+		const height = imageData.height;
+		const halfKernel = Math.floor(kernelSize / 2);
+		const src = new Uint8ClampedArray(data);
+		
+		for (let y = 0; y < height; y++) {
+			for (let x = 0; x < width; x++) {
+				let maxVal = 0;
+				
+				for (let ky = -halfKernel; ky <= halfKernel; ky++) {
+					for (let kx = -halfKernel; kx <= halfKernel; kx++) {
+						const ny = y + ky;
+						const nx = x + kx;
+						
+						if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
+							const idx = (ny * width + nx) * 4;
+							maxVal = Math.max(maxVal, src[idx]);
+						}
+					}
+				}
+				
+				const dstIdx = (y * width + x) * 4;
+				data[dstIdx] = maxVal;
+				data[dstIdx + 1] = maxVal;
+				data[dstIdx + 2] = maxVal;
+			}
+		}
+	}
+	
+	static erode(imageData: ImageData, kernelSize: number): void {
+		const data = imageData.data;
+		const width = imageData.width;
+		const height = imageData.height;
+		const halfKernel = Math.floor(kernelSize / 2);
+		const src = new Uint8ClampedArray(data);
+		
+		for (let y = 0; y < height; y++) {
+			for (let x = 0; x < width; x++) {
+				let minVal = 255;
+				
+				for (let ky = -halfKernel; ky <= halfKernel; ky++) {
+					for (let kx = -halfKernel; kx <= halfKernel; kx++) {
+						const ny = y + ky;
+						const nx = x + kx;
+						
+						if (ny >= 0 && ny < height && nx >= 0 && nx < width) {
+							const idx = (ny * width + nx) * 4;
+							minVal = Math.min(minVal, src[idx]);
+						}
+					}
+				}
+				
+				const dstIdx = (y * width + x) * 4;
+				data[dstIdx] = minVal;
+				data[dstIdx + 1] = minVal;
+				data[dstIdx + 2] = minVal;
+			}
+		}
+	}
+	
+	// Detect skew angle using projection profile
+	static detectSkewAngle(imageData: ImageData): number {
+		const data = imageData.data;
+		const width = imageData.width;
+		const height = imageData.height;
+		const maxAngle = 15;
+		const angleStep = 0.5;
+		let maxVariance = 0;
+		let bestAngle = 0;
+		
+		for (let angle = -maxAngle; angle <= maxAngle; angle += angleStep) {
+			const radians = (angle * Math.PI) / 180;
+			const projection = new Array(height).fill(0);
+			
+			for (let y = 0; y < height; y++) {
+				for (let x = 0; x < width; x++) {
+					const idx = (y * width + x) * 4;
+					if (data[idx] === 0) { // Black pixel
+						const rotatedY = Math.round(y + x * Math.tan(radians));
+						if (rotatedY >= 0 && rotatedY < height) {
+							projection[rotatedY]++;
+						}
+					}
+				}
+			}
+			
+			// Calculate variance of projection
+			const mean = projection.reduce((a, b) => a + b, 0) / projection.length;
+			const variance = projection.reduce((sum, val) => sum + (val - mean) ** 2, 0) / projection.length;
+			
+			if (variance > maxVariance) {
+				maxVariance = variance;
+				bestAngle = angle;
+			}
+		}
+		
+		return bestAngle;
+	}
+	
+	static rotateImage(canvas: HTMLCanvasElement, angle: number): void {
+		const ctx = canvas.getContext('2d');
+		if (!ctx) return;
+		
+		const radians = (angle * Math.PI) / 180;
+		const tempCanvas = document.createElement('canvas');
+		tempCanvas.width = canvas.width;
+		tempCanvas.height = canvas.height;
+		const tempCtx = tempCanvas.getContext('2d');
+		if (!tempCtx) return;
+		
+		tempCtx.drawImage(canvas, 0, 0);
+		
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		ctx.translate(canvas.width / 2, canvas.height / 2);
+		ctx.rotate(radians);
+		ctx.drawImage(tempCanvas, -canvas.width / 2, -canvas.height / 2);
+		ctx.setTransform(1, 0, 0, 1, 0, 0);
+	}
+}
+
 interface OCRPluginSettings {
 	defaultFolder: string;
 	language: string;
@@ -10,10 +227,17 @@ interface OCRPluginSettings {
 	grayscale: boolean;
 	sharpen: boolean;
 	binarize: boolean;
+	binarizeMode: 'fixed' | 'otsu' | 'adaptive';
 	binarizeThreshold: number;
+	adaptiveWindowSize: number;
 	denoise: boolean;
 	upscale: boolean;
 	upscaleFactor: number;
+	morphologicalOps: boolean;
+	morphKernelSize: number;
+	deskew: boolean;
+	showPreview: boolean;
+	preset: string;
 	psm: string;
 	oem: string;
 }
@@ -22,17 +246,24 @@ const DEFAULT_SETTINGS: OCRPluginSettings = {
 	defaultFolder: '',
 	language: 'eng',
 	preprocessImage: true,
-	contrast: 2.0,  // Higher contrast for handwriting
-	brightness: 1.2,  // Slightly brighter for handwriting
+	contrast: 2.0,
+	brightness: 1.2,
 	grayscale: true,
-	sharpen: false,  // Sharpening can hurt handwriting recognition
+	sharpen: false,
 	binarize: true,
-	binarizeThreshold: 140,  // Higher threshold for handwriting (less aggressive)
+	binarizeMode: 'otsu',  // Automatic threshold detection
+	binarizeThreshold: 140,
+	adaptiveWindowSize: 15,
 	denoise: true,
 	upscale: true,
-	upscaleFactor: 3,  // Higher upscaling for handwriting
-	psm: '6',  // Single uniform block - better for handwriting
-	oem: '1'  // LSTM engine is better for handwriting
+	upscaleFactor: 3,
+	morphologicalOps: true,
+	morphKernelSize: 2,
+	deskew: true,
+	showPreview: true,
+	preset: 'handwriting',
+	psm: '6',
+	oem: '1'
 }
 
 export default class OCRPlugin extends Plugin {
@@ -74,20 +305,43 @@ export default class OCRPlugin extends Plugin {
 				return;
 			}
 
-			new Notice('Processing image with OCR...');
-
 			try {
-				const ocrText = await this.performOCR(file);
-				
-				// Show modal to edit metadata before creating note
-				new OCRMetadataModal(
-					this.app,
-					ocrText,
-					this.settings.defaultFolder,
-					async (title: string, date: string, metadata: Record<string, string>, content: string) => {
-						await this.createNote(title, date, metadata, content);
-					}
-				).open();
+				if (this.settings.showPreview) {
+					// Show preview modal first
+					new PreprocessingPreviewModal(
+						this.app,
+						this,
+						file,
+						async (processedFile: File) => {
+							new Notice('Processing image with OCR...');
+							const ocrText = await this.performOCR(processedFile);
+							
+							// Show metadata modal
+							new OCRMetadataModal(
+								this.app,
+								ocrText,
+								this.settings.defaultFolder,
+								async (title: string, date: string, metadata: Record<string, string>, content: string) => {
+									await this.createNote(title, date, metadata, content);
+								}
+							).open();
+						}
+					).open();
+				} else {
+					// Process directly without preview
+					new Notice('Processing image with OCR...');
+					const ocrText = await this.performOCR(file);
+					
+					// Show modal to edit metadata before creating note
+					new OCRMetadataModal(
+						this.app,
+						ocrText,
+						this.settings.defaultFolder,
+						async (title: string, date: string, metadata: Record<string, string>, content: string) => {
+							await this.createNote(title, date, metadata, content);
+						}
+					).open();
+				}
 			} catch (error) {
 				new Notice('OCR processing failed: ' + error.message);
 				console.error('OCR Error:', error);
@@ -220,14 +474,45 @@ export default class OCRPlugin extends Plugin {
 						
 						// Apply binarization (crucial for OCR)
 						if (this.settings.binarize) {
-							const threshold = this.settings.binarizeThreshold;
-							for (let i = 0; i < data.length; i += 4) {
-								const gray = data[i]; // Already grayscale
-								const binary = gray > threshold ? 255 : 0;
-								data[i] = binary;
-								data[i + 1] = binary;
-								data[i + 2] = binary;
+							if (this.settings.binarizeMode === 'otsu') {
+								// Automatic threshold detection using Otsu's method
+								const threshold = ImagePreprocessor.calculateOtsuThreshold(data);
+								for (let i = 0; i < data.length; i += 4) {
+									const gray = data[i];
+									const binary = gray > threshold ? 255 : 0;
+									data[i] = binary;
+									data[i + 1] = binary;
+									data[i + 2] = binary;
+								}
+							} else if (this.settings.binarizeMode === 'adaptive') {
+								// Local adaptive binarization (Bradley method)
+								ImagePreprocessor.adaptiveBinarize(imageData, this.settings.adaptiveWindowSize);
+							} else {
+								// Fixed threshold
+								const threshold = this.settings.binarizeThreshold;
+								for (let i = 0; i < data.length; i += 4) {
+									const gray = data[i];
+									const binary = gray > threshold ? 255 : 0;
+									data[i] = binary;
+									data[i + 1] = binary;
+									data[i + 2] = binary;
+								}
 							}
+						}
+						
+						// Apply morphological operations to clean up and connect strokes
+						if (this.settings.morphologicalOps) {
+							ImagePreprocessor.morphologicalClosing(imageData, this.settings.morphKernelSize);
+						}
+						
+						// Apply deskewing if enabled
+						if (this.settings.deskew) {
+							ctx.putImageData(imageData, 0, 0);
+							const angle = ImagePreprocessor.detectSkewAngle(imageData);
+							if (Math.abs(angle) > 0.5) { // Only rotate if angle is significant
+								ImagePreprocessor.rotateImage(canvas, -angle);
+							}
+							return; // Skip second putImageData below
 						}
 						
 						ctx.putImageData(imageData, 0, 0);
@@ -326,6 +611,137 @@ export default class OCRPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+}
+
+class PreprocessingPreviewModal extends Modal {
+	plugin: OCRPlugin;
+	originalFile: File;
+	onSubmit: (processedFile: File) => void;
+	originalCanvas: HTMLCanvasElement;
+	processedCanvas: HTMLCanvasElement;
+	
+	constructor(
+		app: App,
+		plugin: OCRPlugin,
+		file: File,
+		onSubmit: (processedFile: File) => void
+	) {
+		super(app);
+		this.plugin = plugin;
+		this.originalFile = file;
+		this.onSubmit = onSubmit;
+		this.originalCanvas = document.createElement('canvas');
+		this.processedCanvas = document.createElement('canvas');
+	}
+	
+	async onOpen() {
+		const { contentEl } = this;
+		
+		contentEl.empty();
+		contentEl.createEl('h2', { text: 'Preprocessing Preview' });
+		contentEl.createEl('p', { 
+			text: 'Review the preprocessed image before running OCR. Adjust settings in the plugin settings if needed.',
+			cls: 'setting-item-description'
+		});
+		
+		// Create image comparison container
+		const compareContainer = contentEl.createDiv();
+		compareContainer.addClass('ocr-compare-container');
+		compareContainer.style.display = 'flex';
+		compareContainer.style.gap = '10px';
+		compareContainer.style.marginBottom = '20px';
+		
+		const originalDiv = compareContainer.createDiv();
+		originalDiv.style.flex = '1';
+		originalDiv.createEl('h3', { text: 'Original' });
+		originalDiv.appendChild(this.originalCanvas);
+		this.originalCanvas.style.maxWidth = '100%';
+		this.originalCanvas.style.border = '1px solid var(--background-modifier-border)';
+		
+		const processedDiv = compareContainer.createDiv();
+		processedDiv.style.flex = '1';
+		processedDiv.createEl('h3', { text: 'Preprocessed' });
+		processedDiv.appendChild(this.processedCanvas);
+		this.processedCanvas.style.maxWidth = '100%';
+		this.processedCanvas.style.border = '1px solid var(--background-modifier-border)';
+		
+		// Load and process images
+		await this.loadImages();
+		
+		// Buttons
+		const buttonContainer = contentEl.createDiv();
+		buttonContainer.style.display = 'flex';
+		buttonContainer.style.justifyContent = 'flex-end';
+		buttonContainer.style.gap = '10px';
+		
+		new Setting(buttonContainer)
+			.addButton(button => button
+				.setButtonText('Cancel')
+				.onClick(() => {
+					this.close();
+				}))
+			.addButton(button => button
+				.setButtonText('Proceed with OCR')
+				.setCta()
+				.onClick(async () => {
+					// Convert processed canvas to file
+					const blob = await new Promise<Blob>((resolve) => {
+						this.processedCanvas.toBlob((b) => resolve(b!), 'image/png');
+					});
+					const processedFile = new File([blob], this.originalFile.name, { type: 'image/png' });
+					this.close();
+					this.onSubmit(processedFile);
+				}));
+	}
+	
+	async loadImages() {
+		return new Promise<void>((resolve, reject) => {
+			const reader = new FileReader();
+			reader.onload = (e) => {
+				const img = new Image();
+				img.onload = async () => {
+					// Draw original
+					const maxWidth = 400;
+					const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+					this.originalCanvas.width = img.width * scale;
+					this.originalCanvas.height = img.height * scale;
+					const origCtx = this.originalCanvas.getContext('2d');
+					if (origCtx) {
+						origCtx.drawImage(img, 0, 0, this.originalCanvas.width, this.originalCanvas.height);
+					}
+					
+					// Process and draw processed version
+					try {
+						const processedDataUrl = await this.plugin.preprocessImage(this.originalFile);
+						const processedImg = new Image();
+						processedImg.onload = () => {
+							const procScale = processedImg.width > maxWidth ? maxWidth / processedImg.width : 1;
+							this.processedCanvas.width = processedImg.width * procScale;
+							this.processedCanvas.height = processedImg.height * procScale;
+							const procCtx = this.processedCanvas.getContext('2d');
+							if (procCtx) {
+								procCtx.drawImage(processedImg, 0, 0, this.processedCanvas.width, this.processedCanvas.height);
+							}
+							resolve();
+						};
+						processedImg.onerror = () => reject(new Error('Failed to load processed image'));
+						processedImg.src = processedDataUrl;
+					} catch (error) {
+						reject(error);
+					}
+				};
+				img.onerror = () => reject(new Error('Failed to load image'));
+				img.src = e.target?.result as string;
+			};
+			reader.onerror = () => reject(new Error('Failed to read file'));
+			reader.readAsDataURL(this.originalFile);
+		});
+	}
+	
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
 	}
 }
 
@@ -565,6 +981,16 @@ class OCRSettingTab extends PluginSettingTab {
 	});
 
 	new Setting(containerEl)
+			.setName('Show preprocessing preview')
+			.setDesc('Show before/after comparison before running OCR')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.showPreview)
+				.onChange(async (value) => {
+					this.plugin.settings.showPreview = value;
+					await this.plugin.saveSettings();
+				}));
+
+	new Setting(containerEl)
 			.setName('Enable preprocessing')
 			.setDesc('Apply image enhancements before OCR (essential for handwriting)')
 			.addToggle(toggle => toggle
@@ -650,7 +1076,7 @@ class OCRSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
 
-		new Setting(containerEl)
+	new Setting(containerEl)
 			.setName('Binarize (Black & White)')
 			.setDesc('Convert to pure black & white - crucial for OCR accuracy (recommended)')
 			.addToggle(toggle => toggle
@@ -661,14 +1087,71 @@ class OCRSettingTab extends PluginSettingTab {
 				}));
 
 	new Setting(containerEl)
-			.setName('Binarization threshold')
-			.setDesc('For handwriting: 130-150 (higher = less aggressive). Lower if text disappears, higher if too noisy')
+			.setName('Binarization mode')
+			.setDesc('Otsu (automatic) works best for most cases. Try adaptive for varying lighting.')
+			.addDropdown(dropdown => dropdown
+				.addOption('fixed', 'Fixed threshold')
+				.addOption('otsu', 'Otsu (automatic - recommended)')
+				.addOption('adaptive', 'Adaptive (local threshold)')
+				.setValue(this.plugin.settings.binarizeMode)
+				.onChange(async (value: 'fixed' | 'otsu' | 'adaptive') => {
+					this.plugin.settings.binarizeMode = value;
+					await this.plugin.saveSettings();
+				}));
+
+	new Setting(containerEl)
+			.setName('Fixed binarization threshold')
+			.setDesc('Only used if mode is "Fixed". For handwriting: 130-150')
 			.addSlider(slider => slider
 				.setLimits(50, 200, 5)
 				.setValue(this.plugin.settings.binarizeThreshold)
 				.setDynamicTooltip()
 				.onChange(async (value) => {
 					this.plugin.settings.binarizeThreshold = value;
+					await this.plugin.saveSettings();
+				}));
+
+	new Setting(containerEl)
+			.setName('Adaptive window size')
+			.setDesc('Only used if mode is "Adaptive". Larger = more global, smaller = more local')
+			.addSlider(slider => slider
+				.setLimits(5, 50, 5)
+				.setValue(this.plugin.settings.adaptiveWindowSize)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.adaptiveWindowSize = value;
+					await this.plugin.saveSettings();
+				}));
+
+	new Setting(containerEl)
+			.setName('Morphological operations')
+			.setDesc('Connect broken strokes and remove noise (recommended for handwriting)')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.morphologicalOps)
+				.onChange(async (value) => {
+					this.plugin.settings.morphologicalOps = value;
+					await this.plugin.saveSettings();
+				}));
+
+	new Setting(containerEl)
+			.setName('Morphological kernel size')
+			.setDesc('Size of morphological operations (2-3 recommended)')
+			.addSlider(slider => slider
+				.setLimits(1, 5, 1)
+				.setValue(this.plugin.settings.morphKernelSize)
+				.setDynamicTooltip()
+				.onChange(async (value) => {
+					this.plugin.settings.morphKernelSize = value;
+					await this.plugin.saveSettings();
+				}));
+
+	new Setting(containerEl)
+			.setName('Auto-deskew (rotation correction)')
+			.setDesc('Automatically detect and correct small rotation angles')
+			.addToggle(toggle => toggle
+				.setValue(this.plugin.settings.deskew)
+				.onChange(async (value) => {
+					this.plugin.settings.deskew = value;
 					await this.plugin.saveSettings();
 				}));
 
@@ -679,10 +1162,14 @@ class OCRSettingTab extends PluginSettingTab {
 		cls: 'setting-item-description'
 	});
 	const tipsList = containerEl.createEl('ul', { cls: 'ocr-tips' });
+	tipsList.createEl('li', { text: 'Enable "Show preprocessing preview" to see how your settings affect the image' });
+	tipsList.createEl('li', { text: 'Use Otsu binarization mode (automatic) for best results with varying images' });
+	tipsList.createEl('li', { text: 'Try adaptive binarization if image has uneven lighting or shadows' });
 	tipsList.createEl('li', { text: 'Take photos in bright, even lighting with the text perpendicular to camera' });
 	tipsList.createEl('li', { text: 'Use 3x upscaling for small or tightly-spaced handwriting' });
 	tipsList.createEl('li', { text: 'Set contrast to 2.0-2.5 for faint pen/pencil' });
-	tipsList.createEl('li', { text: 'Binarization threshold 130-150 works best for most handwriting' });
+	tipsList.createEl('li', { text: 'Enable morphological operations to connect broken handwriting strokes' });
+	tipsList.createEl('li', { text: 'Auto-deskew helps with slightly rotated photos' });
 	tipsList.createEl('li', { text: 'Keep sharpening OFF - it creates artifacts with handwriting' });
 	tipsList.createEl('li', { text: 'PSM 6 (default) works for paragraphs, try PSM 11 for sparse notes' });
 	tipsList.createEl('li', { text: 'Cursive and highly stylized handwriting will have poor results' });

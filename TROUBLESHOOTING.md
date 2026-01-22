@@ -4,16 +4,31 @@
 
 If the OCR is producing nonsensical text, try these solutions in order:
 
-### 1. Enable Image Preprocessing (Recommended)
+### 1. Use Preprocessing Preview (NEW!)
+
+Go to **Settings → OCR Image to Note → General**:
+- ✅ Enable **Show preprocessing preview**
+- This lets you see how preprocessing affects your image before OCR
+- Adjust settings until the preprocessed image looks clear with good contrast
+
+### 2. Enable Otsu Binarization (Recommended)
 
 Go to **Settings → OCR Image to Note → Image Preprocessing**:
 - ✅ Enable preprocessing
+- Set **Binarization mode** to **Otsu (automatic)**
+- ✅ Enable **Morphological operations** (connects broken strokes)
+- ✅ Enable **Auto-deskew** (corrects rotation)
 - ✅ Convert to grayscale
-- Set **Contrast** to **1.5** or higher
-- Set **Brightness** to **1.1**
-- ✅ Apply sharpening
+- Set **Contrast** to **2.0-2.5** for handwriting
+- Set **Upscale** to **3x** for handwriting
 
-### 2. Adjust Page Segmentation Mode
+### 3. Try Adaptive Binarization for Uneven Lighting
+
+If your image has shadows or uneven lighting:
+- Set **Binarization mode** to **Adaptive**
+- Adjust **Adaptive window size** (15 is default, try 20-30 for more local)
+
+### 4. Adjust Page Segmentation Mode
 
 Go to **Settings → OCR Configuration → Page Segmentation Mode**:
 
@@ -27,7 +42,7 @@ Go to **Settings → OCR Configuration → Page Segmentation Mode**:
 **For single lines:**
 - Try **PSM 7** (Single text line)
 
-### 3. Check Your Image Quality
+### 5. Check Your Image Quality
 
 Good OCR requires:
 - ✅ Well-lit images (avoid shadows)
@@ -42,7 +57,7 @@ Avoid:
 - ❌ Very small text
 - ❌ Heavy compression artifacts
 
-### 4. Adjust Preprocessing Settings for Your Image
+### 6. Adjust Preprocessing Settings for Your Image
 
 **For faint handwriting:**
 - Increase **Contrast** to 2.0-2.5
@@ -60,7 +75,7 @@ Avoid:
 - Increase **Contrast** to 2.5-3.0
 - Keep **Brightness** at 1.0
 
-### 5. Language Settings
+### 7. Language Settings
 
 If your text is not in English:
 
@@ -76,7 +91,7 @@ Go to **Settings → OCR Configuration → Language** and set the appropriate la
 
 For multiple languages, use `+` (e.g., `eng+spa`)
 
-### 6. Pre-process Your Image Before Upload
+### 8. Pre-process Your Image Before Upload
 
 For best results, edit your image before uploading:
 1. Take a straight, well-lit photo
@@ -129,42 +144,54 @@ For best results, edit your image before uploading:
 
 ### Handwritten Meeting Notes
 ```
+Preview: ON
+Binarization Mode: Otsu (automatic)
 PSM: 6 or 11
 OEM: 1 (LSTM)
 Preprocessing: ON
 Grayscale: ON
-Contrast: 1.8-2.2
-Brightness: 1.1-1.3
-Sharpening: ON
+Contrast: 2.0-2.5
+Brightness: 1.2
+Morphological Ops: ON
+Auto-deskew: ON
+Upscale: 3x
+Sharpening: OFF
 ```
 
 ### Printed Documents
 ```
+Binarization Mode: Otsu (automatic)
 PSM: 3
 OEM: 1 (LSTM)
 Preprocessing: ON
 Grayscale: ON
-Contrast: 1.2-1.5
-Brightness: 1.0-1.1
+Contrast: 1.5
+Morphological Ops: OFF
+Auto-deskew: ON
 Sharpening: OFF
 ```
 
 ### Phone Photos of Whiteboards
 ```
+Binarization Mode: Adaptive (for uneven lighting)
+Adaptive Window Size: 25
 PSM: 6
 OEM: 1 (LSTM)
 Preprocessing: ON
 Grayscale: ON
-Contrast: 2.0-2.5
-Brightness: 1.2-1.5
-Sharpening: ON
+Contrast: 2.5
+Brightness: 1.3
+Morphological Ops: ON
+Auto-deskew: ON
+Sharpening: OFF
 ```
 
-### Screenshots
+### Screenshots (Digital Text)
 ```
+Binarization Mode: Fixed or OFF
 PSM: 3
 OEM: 1 (LSTM)
-Preprocessing: OFF
+Preprocessing: OFF or minimal
 (Screenshots are already digital and clear)
 ```
 

@@ -7,9 +7,16 @@ Convert handwritten text images to Obsidian notes using OCR (Optical Character R
 - Upload images containing handwritten or printed text
 - Extract text using Tesseract.js OCR engine with configurable settings
 - **Advanced image preprocessing** for improved accuracy:
+  - **Live preprocessing preview** - see before/after comparison
+  - **Adaptive binarization** - Otsu's method for automatic threshold detection
+  - **Local adaptive binarization** - Bradley method for varying lighting
   - Grayscale conversion
   - Adjustable contrast and brightness
   - Image sharpening for blurry text
+  - **Morphological operations** - connect broken strokes, remove noise
+  - **Auto-deskewing** - automatic rotation correction
+  - Image upscaling (up to 4x)
+  - Denoising filter
 - **Configurable OCR parameters**:
   - Multiple page segmentation modes (PSM)
   - OCR engine selection (OEM)
@@ -70,6 +77,7 @@ Access settings via Settings → OCR Image to Note
 
 **General:**
 - **Default Folder**: Specify a default folder where new notes will be created
+- **Show Preprocessing Preview**: See before/after comparison before running OCR
 
 **OCR Configuration:**
 - **Language**: Set OCR language (eng, spa, fra, deu, chi_sim, etc.)
@@ -82,9 +90,17 @@ Access settings via Settings → OCR Image to Note
 **Image Preprocessing:**
 - **Enable Preprocessing**: Toggle image enhancements on/off
 - **Grayscale**: Convert to grayscale for better accuracy
-- **Contrast**: Adjust contrast (1.5 recommended for handwriting)
-- **Brightness**: Adjust brightness (1.1 recommended)
-- **Sharpening**: Enable for blurry or low-quality images
+- **Contrast**: Adjust contrast (2.0-2.5 recommended for handwriting)
+- **Brightness**: Adjust brightness (1.2 recommended)
+- **Sharpening**: Enable for blurry or low-quality images (usually off for handwriting)
+- **Denoising**: Remove noise using median filter
+- **Upscale**: Increase resolution before OCR (3x recommended for handwriting)
+- **Binarization Mode**: 
+  - Otsu (automatic - recommended)
+  - Adaptive (local threshold - best for varying lighting)
+  - Fixed threshold (manual control)
+- **Morphological Operations**: Connect broken strokes and remove noise
+- **Auto-deskew**: Automatically correct small rotation angles
 
 ## Note Format
 
